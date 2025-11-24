@@ -1,0 +1,9 @@
+*
+
+!/1
+
+!/1/*.py
+
+!.gitignore
+!requirements.txt
+!LICENSE
