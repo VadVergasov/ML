@@ -23,7 +23,7 @@ LETTERS = 'ABCDEFGHIJ'
 image_data = []
 image_labels = []
 
-def load_images_with_progress(image_dir, class_label, class_index):
+def load_images_with_progress(image_dir, class_label):
     image_data = []
     image_labels = []
     files = [f for f in os.listdir(image_dir) if f.endswith('.png')]
@@ -33,13 +33,13 @@ def load_images_with_progress(image_dir, class_label, class_index):
         img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
         if img is not None:
             image_data.append(img.flatten())
-            image_labels.append(class_index)
+            image_labels.append(class_label)
 
     return image_data, image_labels
 
 for letter in LETTERS:
     folder_path = os.path.join(os.path.expanduser("~"), DATA_DIR, letter)
-    img_data, img_labels = load_images_with_progress(folder_path, letter, letter)
+    img_data, img_labels = load_images_with_progress(folder_path, letter)
     image_data.extend(img_data)
     image_labels.extend(img_labels)
 

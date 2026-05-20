@@ -4,6 +4,11 @@
 
 !/1/*.py
 
+!/2
+
+!/2/*.py
+!/2/*.h5
+
 !.gitignore
 !requirements.txt
 !LICENSE

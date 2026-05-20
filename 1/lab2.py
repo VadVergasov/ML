@@ -1,12 +1,8 @@
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 import cv2
 import numpy as np
 import os
-import random
 
 
 LARGE_DATA_DIR = 'notMNIST_large'
@@ -84,19 +80,16 @@ print(f"Обновленная обучающая выборка: {len(train_dat
 import tensorflow as tf
 from tensorflow.keras import layers, models, optimizers
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
 import os
 
 # --- Гиперпараметры
 BATCH_SIZE = 8192
-EPOCHS = 100
-LEARNING_RATE = 0.1
-DROPOUT_RATE = 0.5
+EPOCHS = 30
+LEARNING_RATE = 0.01
+DROPOUT_RATE = 0.3
 L2_REG = 0.01
-DECAY_RATE = 0.1
+DECAY_RATE = 0.01
 
 # --- Функция для обучения с динамическим LR
 def train_model(X_train, y_train, X_val, y_val, epochs=EPOCHS, lr=LEARNING_RATE):
@@ -142,20 +135,3 @@ def evaluate_model(model, X_test, y_test):
 model = train_model(train_data, train_labels, val_data, val_labels)
 test_acc = evaluate_model(model, test_data, test_labels)
 print(f"Точность на тесте: {test_acc:.4f}")
-
-def train_and_evaluate(X_train, y_train, X_val, y_val):
-    X_train_sample = np.array([row.flatten() for row in X_train[:50000]])
-    y_train_sample = y_train[:50000]
-    
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train_sample)
-    X_val_scaled = scaler.transform(np.array([row.flatten() for row in X_val]))
-    
-    clf = LogisticRegression(max_iter=1000, random_state=42)
-    clf.fit(X_train_scaled, y_train_sample)
-    
-    y_pred = clf.predict(X_val_scaled)
-    acc = accuracy_score(y_val, y_pred)
-    return acc
-
-lr_acc = train_and_evaluate(train_data, train_labels, val_data, val_labels)
