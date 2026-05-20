@@ -9,6 +9,24 @@
 !/2/*.py
 !/2/*.h5
 
+!/server
+!/server/*.md
+!/server/*.py
+
+!/DigitRecognition
+!/DigitRecognition/*.md
+!/DigitRecognition/*.plist
+!/DigitRecognition/DigitRecognition
+!/DigitRecognition/DigitRecognition/*.swift
+!/DigitRecognition/DigitRecognition/Models
+!/DigitRecognition/DigitRecognition/Models/*.swift
+!/DigitRecognition/DigitRecognition/Resources
+!/DigitRecognition/DigitRecognition/Resources/*.swift
+!/DigitRecognition/DigitRecognition/Services
+!/DigitRecognition/DigitRecognition/Services/*.swift
+!/DigitRecognition/DigitRecognition/Views
+!/DigitRecognition/DigitRecognition/Views/*.swift
+
 !.gitignore
 !requirements.txt
 !LICENSE
