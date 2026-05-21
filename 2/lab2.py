@@ -445,7 +445,7 @@ num_digits, num_labels = y_train.shape[1], len(np.unique(y_train))
 img_height, img_width, num_channels = 32, 32, 1
 num_labels = 11  # 10 цифр + 1 пустая заглушка
 
-epochs = 20
+epochs = 100
 batch_size = 512
 display_step = 200
 
