@@ -1,16 +1,19 @@
 """
-Flask-приложение для сервера распознавания цифр
+Flask-приложение для сервера распознавания последовательности цифр (SVHN).
+
+Модель принимает всё изображение целиком и предсказывает
+до 5 цифр сразу (выход формы (5, 11)).
 """
 
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 import config
-from model_loader import ModelLoader
 from image_processor import ImageProcessor
+from model_loader import ModelLoader
 
 # Настройка логирования
 logging.basicConfig(
@@ -32,15 +35,7 @@ image_processor = ImageProcessor()
 
 
 def allowed_file(filename: str) -> bool:
-    """
-    Проверить, что расширение файла разрешено
-    
-    Args:
-        filename: Имя файла
-        
-    Returns:
-        True, если расширение разрешено, иначе False
-    """
+    """Проверить что расширение файла разрешено"""
     return (
         '.' in filename and
         filename.rsplit('.', 1)[1].lower() in config.ALLOWED_EXTENSIONS
@@ -50,24 +45,23 @@ def allowed_file(filename: str) -> bool:
 @app.route('/health', methods=['GET'])
 def health_check() -> Dict[str, Any]:
     """
-    Эндпоинт для проверки работоспособности сервера
-    
+    Проверка работоспособности сервера.
+
     Returns:
         JSON с информацией о статусе сервера и модели
     """
     try:
         model_info = model_loader.get_model_info()
-        
         return jsonify({
             'status': 'healthy',
             'model': {
                 'input_shape': [
-                    str(dim) if dim is not None else None
-                    for dim in model_info['input_shape']
+                    str(d) if d is not None else None
+                    for d in model_info['input_shape']
                 ],
                 'output_shape': [
-                    str(dim) if dim is not None else None
-                    for dim in model_info['output_shape']
+                    str(d) if d is not None else None
+                    for d in model_info['output_shape']
                 ],
                 'num_params': model_info['num_params'],
                 'model_path': model_info['model_path']
@@ -78,121 +72,129 @@ def health_check() -> Dict[str, Any]:
                 'allowed_extensions': list(config.ALLOWED_EXTENSIONS)
             }
         }), 200
-        
     except Exception as e:
         logger.error(f"Ошибка при проверке здоровья: {e}")
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e)
-        }), 500
+        return jsonify({'status': 'unhealthy', 'error': str(e)}), 500
 
 
 @app.route('/predict', methods=['POST'])
 def predict() -> Dict[str, Any]:
     """
-    Эндпоинт для распознавания цифры на изображении
-    
-    Ожидает multipart/form-data с полем 'image', содержащим файл изображения.
-    
+    Распознавание последовательности цифр на изображении.
+
+    Принимает multipart/form-data с полем 'image'.
+    Модель предсказывает до 5 цифр сразу из всего изображения.
+
     Returns:
-        JSON с результатами распознавания:
+        JSON:
         {
             "success": true,
-            "predictions": [0.01, 0.02, 0.85, ...],
-            "predicted_class": 2,
-            "confidence": 0.85
+            "digits": [
+                {
+                    "digit": 4,
+                    "confidence": 0.97,
+                    "probabilities": [0.0, ..., 0.97, ...]  // 11 значений
+                },
+                ...
+            ],
+            "number": "42",
+            "digits_count": 2
         }
     """
     try:
-        # Проверяем наличие файла в запросе
+        # Проверяем наличие файла
         if 'image' not in request.files:
-            logger.warning("Запрос без файла изображения")
             return jsonify({
                 'success': False,
                 'error': 'Отсутствует файл изображения'
             }), 400
-        
+
         file = request.files['image']
-        
-        # Проверяем, что файл выбран
+
         if file.filename == '':
-            logger.warning("Пустое имя файла")
             return jsonify({
                 'success': False,
                 'error': 'Файл не выбран'
             }), 400
-        
-        # Проверяем расширение файла
+
         if not allowed_file(file.filename):
-            logger.warning(f"Недопустимое расширение файла: {file.filename}")
             return jsonify({
                 'success': False,
                 'error': (
-                    f'Недопустимый формат файла. Разрешены: '
+                    f'Недопустимый формат. Разрешены: '
                     f'{", ".join(config.ALLOWED_EXTENSIONS)}'
                 )
             }), 400
-        
-        # Читаем байты изображения
+
         image_bytes = file.read()
-        
-        # Проверяем, что это валидное изображение
+
         if not image_processor.validate_image(image_bytes):
-            logger.warning("Невалидное изображение")
             return jsonify({
                 'success': False,
                 'error': 'Невалидное изображение'
             }), 400
-        
-        # Предобрабатываем изображение
-        processed_image = image_processor.process_from_bytes(image_bytes)
-        
-        # Выполняем предсказание
-        predictions = model_loader.predict(processed_image)
-        
-        # Находим предсказанный класс и уверенность
-        predicted_class = int(predictions.argmax())
-        confidence = float(predictions[predicted_class])
-        
-        # Формируем ответ
-        response = {
-            'success': True,
-            'predictions': [float(p) for p in predictions],
-            'predicted_class': predicted_class,
-            'confidence': confidence
-        }
-        
+
+        # Предобрабатываем всё изображение целиком → (32, 32, 1)
+        processed_image = image_processor.preprocess(image_bytes)
+
+        # Предсказание: digits — список цифр без заглушек,
+        # probs_per_pos — список из 5 векторов по 11 вероятностей
+        digits, probs_per_pos = model_loader.predict(processed_image)
+
+        # Формируем детальный ответ по каждой позиции
+        results = []
+        for pos_idx, probs in enumerate(probs_per_pos):
+            # Индекс предсказанного класса для этой позиции
+            predicted_cls = int(max(range(len(probs)), key=lambda i: probs[i]))
+
+            # Пропускаем позиции-заглушки (класс 10)
+            if predicted_cls == config.BLANK_CLASS:
+                continue
+
+            confidence = float(probs[predicted_cls])
+            results.append({
+                'digit': predicted_cls,
+                'confidence': confidence,
+                # Передаём все 11 вероятностей (0-9 + заглушка)
+                'probabilities': [float(p) for p in probs]
+            })
+
+        number_str = ''.join(str(d['digit']) for d in results)
+
         logger.info(
-            f"Распознавание успешно: класс={predicted_class}, "
-            f"уверенность={confidence:.4f}"
+            f"Распознан номер: '{number_str}' "
+            f"({len(results)} цифр)"
         )
-        
-        return jsonify(response), 200
-        
+
+        return jsonify({
+            'success': True,
+            'digits': results,
+            'number': number_str,
+            'digits_count': len(results)
+        }), 200
+
     except Exception as e:
         logger.error(f"Ошибка при распознавании: {e}", exc_info=True)
         return jsonify({
             'success': False,
-            'error': f'Ошибка при обработке изображения: {str(e)}'
+            'error': f'Ошибка при обработке: {str(e)}'
         }), 500
 
 
 @app.errorhandler(413)
 def request_entity_too_large(error) -> Dict[str, Any]:
-    """Обработка ошибки слишком большого файла"""
+    """Файл слишком большой"""
+    max_mb = config.MAX_CONTENT_LENGTH / (1024 * 1024)
     return jsonify({
         'success': False,
-        'error': (
-            f'Файл слишком большой. Максимальный размер: '
-            f'{config.MAX_CONTENT_LENGTH / (1024 * 1024):.0f} MB'
-        )
+        'error': f'Файл слишком большой. Максимум: {max_mb:.0f} MB'
     }), 413
 
 
 @app.errorhandler(500)
 def internal_server_error(error) -> Dict[str, Any]:
-    """Обработка внутренней ошибки сервера"""
-    logger.error(f"Внутренняя ошибка сервера: {error}")
+    """Внутренняя ошибка сервера"""
+    logger.error(f"Внутренняя ошибка: {error}")
     return jsonify({
         'success': False,
         'error': 'Внутренняя ошибка сервера'
@@ -201,15 +203,10 @@ def internal_server_error(error) -> Dict[str, Any]:
 
 def main():
     """Запуск сервера"""
-    logger.info("Запуск сервера распознавания цифр...")
+    logger.info("Запуск сервера распознавания цифр (SVHN)...")
     logger.info(f"Хост: {config.HOST}, Порт: {config.PORT}")
     logger.info(f"Путь к модели: {config.MODEL_PATH}")
-    
-    app.run(
-        host=config.HOST,
-        port=config.PORT,
-        debug=config.DEBUG
-    )
+    app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
 
 
 if __name__ == '__main__':

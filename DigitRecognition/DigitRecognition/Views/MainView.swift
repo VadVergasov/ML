@@ -16,7 +16,7 @@ struct MainView: View {
     @State private var showResult = false
     @State private var showImagePicker = false
     @State private var showCamera = false
-    @State private var serverURL = "http://YOUR_SERVER_IP:5000"
+    @State private var serverURL = "http://YOUR_SERVER_IP:8888"
 
     var body: some View {
         NavigationView {

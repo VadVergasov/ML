@@ -1,12 +1,19 @@
 """
-Модуль для предобработки изображений перед подачей в модель
+Модуль для предобработки изображений перед распознаванием цифр.
+
+Модель SVHN принимает всё изображение целиком (32x32, grayscale).
+Предобработка повторяет шаги из 2/lab2.py:
+  1. RGB -> grayscale
+  2. resize до 32x32
+  3. нормализация: (x - mean) / std
 """
 
 import logging
+from io import BytesIO
+
 import numpy as np
 import tensorflow as tf
 from PIL import Image
-from io import BytesIO
 
 import config
 
@@ -14,159 +21,89 @@ logger = logging.getLogger(__name__)
 
 
 class ImageProcessor:
-    """Класс для предобработки изображений"""
-    
+    """Класс для предобработки изображений перед подачей в модель SVHN"""
+
     def __init__(self):
-        """Инициализация процессора изображений"""
-        self.target_size = config.IMAGE_SIZE
-        self.channels = config.IMAGE_CHANNELS
-        self.norm_factor = config.NORMALIZATION_FACTOR
-    
-    def process_from_bytes(self, image_bytes: bytes) -> np.ndarray:
+        self.target_size = config.IMAGE_SIZE      # (32, 32)
+        self.mean = config.NORMALIZE_MEAN
+        self.std = config.NORMALIZE_STD
+
+    # ------------------------------------------------------------------
+    # Публичные методы
+    # ------------------------------------------------------------------
+
+    def preprocess(self, image_bytes: bytes) -> np.ndarray:
         """
-        Предобработать изображение из байтов
-        
+        Предобработать изображение для подачи в модель SVHN.
+
+        Шаги (повторяют 2/lab2.py):
+          1. Открыть изображение, привести к RGB
+          2. float32, нормализация [0, 1] делением на 255
+          3. rgb_to_grayscale
+          4. resize до (32, 32)
+          5. нормализация: (x - mean) / std
+
         Args:
-            image_bytes: Байты изображения (PNG, JPEG и т.д.)
-            
+            image_bytes: Байты изображения
+
         Returns:
-            Предобработанное изображение в формате numpy array формы (H, W, C)
+            numpy array формы (32, 32, 1)
         """
         try:
-            # Декодируем изображение из байтов
-            image = Image.open(BytesIO(image_bytes))
-            
-            # Конвертируем в RGB, если изображение в другом формате
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            # Конвертируем в numpy array
-            image_array = np.array(image)
-            
-            # Предобрабатываем
-            processed = self._preprocess(image_array)
-            
-            logger.debug(
-                f"Изображение успешно предобработано: {processed.shape}"
-            )
-            return processed
-            
+            pil_image = Image.open(BytesIO(image_bytes))
+            if pil_image.mode != 'RGB':
+                pil_image = pil_image.convert('RGB')
+            img_rgb = np.array(pil_image, dtype=np.float32)
+
+            return self._preprocess_array(img_rgb)
+
         except Exception as e:
             logger.error(f"Ошибка при предобработке изображения: {e}")
             raise
-    
-    def process_from_file(self, file_path: str) -> np.ndarray:
-        """
-        Предобработать изображение из файла
-        
-        Args:
-            file_path: Путь к файлу изображения
-            
-        Returns:
-            Предобработанное изображение в формате numpy array формы (H, W, C)
-        """
-        try:
-            # Загружаем изображение
-            image = Image.open(file_path)
-            
-            # Конвертируем в RGB, если изображение в другом формате
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            # Конвертируем в numpy array
-            image_array = np.array(image)
-            
-            # Предобрабатываем
-            processed = self._preprocess(image_array)
-            
-            logger.debug(
-                f"Изображение из файла успешно предобработано: "
-                f"{processed.shape}"
-            )
-            return processed
-            
-        except Exception as e:
-            logger.error(f"Ошибка при предобработке изображения из файла: {e}")
-            raise
-    
-    def _preprocess(self, image: np.ndarray) -> np.ndarray:
-        """
-        Внутренний метод предобработки
-        
-        Args:
-            image: Изображение в формате numpy array (H, W, C)
-            
-        Returns:
-            Предобработанное изображение формы (H, W, 1) для модели
-        """
-        # Добавляем размерность батча, если её нет
-        if len(image.shape) == 2:
-            image = np.expand_dims(image, axis=-1)
-        
-        # Конвертируем в float32
-        image = image.astype(np.float32)
-        
-        # Нормализуем в диапазон [0, 1]
-        image = image / self.norm_factor
-        
-        # Конвертируем в grayscale (как при обучении модели)
-        # Используем tf.image.rgb_to_grayscale для совместимости с обучением
-        if image.shape[-1] == 3:
-            # Добавляем размерность батча для TensorFlow
-            image_batch = np.expand_dims(image, axis=0)
-            grayscale = tf.image.rgb_to_grayscale(image_batch)
-            image = grayscale.numpy()[0]
-        
-        # Resize до целевого размера (как при обучении: tf.image.resize)
-        if image.shape[:2] != self.target_size:
-            # Добавляем размерность батча для TensorFlow
-            image_batch = np.expand_dims(image, axis=0)
-            resized = tf.image.resize(image_batch, self.target_size)
-            image = resized.numpy()[0]
-        
-        # Убеждаемся, что форма правильная (H, W, 1)
-        if len(image.shape) == 2:
-            image = np.expand_dims(image, axis=-1)
-        
-        return image
-    
+
     def validate_image(self, image_bytes: bytes) -> bool:
-        """
-        Проверить, что байты содержат валидное изображение
-        
-        Args:
-            image_bytes: Байты для проверки
-            
-        Returns:
-            True, если это валидное изображение, иначе False
-        """
+        """Проверить что байты содержат валидное изображение"""
         try:
             Image.open(BytesIO(image_bytes))
             return True
         except Exception:
             return False
-    
-    def get_image_info(self, image_bytes: bytes) -> dict:
+
+    # ------------------------------------------------------------------
+    # Приватные методы
+    # ------------------------------------------------------------------
+
+    def _preprocess_array(self, img_rgb: np.ndarray) -> np.ndarray:
         """
-        Получить информацию об изображении
-        
+        Предобработать RGB numpy array до формата модели (32, 32, 1).
+
         Args:
-            image_bytes: Байты изображения
-            
+            img_rgb: float32 RGB массив любого размера
+
         Returns:
-            Словарь с информацией об изображении
+            numpy array формы (32, 32, 1), нормализованный
         """
-        try:
-            image = Image.open(BytesIO(image_bytes))
-            return {
-                'format': image.format,
-                'mode': image.mode,
-                'size': image.size,
-                'width': image.width,
-                'height': image.height
-            }
-        except Exception as e:
-            logger.error(
-                f"Ошибка при получении информации об изображении: {e}"
-            )
-            return {}
+        # Убеждаемся что 3 канала
+        if len(img_rgb.shape) == 2:
+            img_rgb = np.stack([img_rgb] * 3, axis=-1)
+        elif img_rgb.shape[-1] == 4:
+            img_rgb = img_rgb[:, :, :3]
+
+        # float32 + нормализация [0, 1]
+        img = img_rgb.astype(np.float32) / 255.0
+
+        # rgb_to_grayscale через tf (как при обучении)
+        img_batch = np.expand_dims(img, axis=0)          # (1, H, W, 3)
+        gray = tf.image.rgb_to_grayscale(img_batch)      # (1, H, W, 1)
+
+        # resize до 32x32 через tf (как при обучении)
+        resized = tf.image.resize(
+            gray, list(self.target_size)
+        )                                                 # (1, 32, 32, 1)
+
+        result = resized.numpy()[0]                       # (32, 32, 1)
+
+        # Нормализация: (x - mean) / std  (как при обучении SVHN)
+        result = (result - self.mean) / self.std
+
+        return result.astype(np.float32)

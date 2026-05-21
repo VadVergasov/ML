@@ -1,14 +1,14 @@
 """
-Модуль для загрузки и управления моделью распознавания цифр.
+Модуль для загрузки и управления моделью распознавания последовательности цифр.
 
-Модель сохранена через tensorflow.keras в формате H5.
-Из-за несовместимости версий Keras пересоздаём архитектуру
-из кода и загружаем только веса из H5 файла.
+Модель обучена на датасете SVHN (Street View House Numbers).
+Архитектура: CNN → выход (5, 11) — 5 позиций цифр, 11 классов (0-9 + заглушка).
+Веса сохранены в формате H5 через model.save_weights().
 """
 
 import logging
 import os
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -18,61 +18,114 @@ import config
 logger = logging.getLogger(__name__)
 
 
-def _build_model():
+def _build_svhn_model() -> tf.keras.Model:
     """
-    Пересоздать архитектуру модели из кода.
+    Пересоздать архитектуру модели SVHN из кода.
 
-    Архитектура взята из 2/lab2.py — точная копия модели,
-    которая была обучена и сохранена в numbers.h5.
+    Точная копия архитектуры из 2/lab2.py (build_svhn_model).
+    Вход:  (32, 32, 1)  — grayscale изображение
+    Выход: (5, 11)      — 5 позиций цифр, 11 классов каждая
     """
     layers = tf.keras.layers
 
-    def residual_block(x, filters, downsample=False):
-        shortcut = x
-        strides = 2 if downsample else 1
+    img_height = config.IMAGE_SIZE[0]   # 32
+    img_width = config.IMAGE_SIZE[1]    # 32
+    num_channels = config.IMAGE_CHANNELS  # 1
+    num_digits = config.NUM_DIGIT_POSITIONS  # 5
+    num_labels = config.NUM_CLASSES          # 11
 
-        x = layers.Conv2D(
-            filters, (3, 3), strides=strides, padding="same"
-        )(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.Activation("relu")(x)
+    dropout_rate_conv = 0.50
+    dropout_rate_fc = 0.50
 
-        x = layers.Conv2D(filters, (3, 3), padding="same")(x)
-        x = layers.BatchNormalization()(x)
+    keras_init = 'glorot_uniform'  # xavier
 
-        if downsample or x.shape[-1] != shortcut.shape[-1]:
-            shortcut = layers.Conv2D(
-                filters, (1, 1), strides=strides, padding="same"
-            )(shortcut)
-            shortcut = layers.BatchNormalization()(shortcut)
+    inputs = tf.keras.Input(
+        shape=(img_height, img_width, num_channels), name='x'
+    )
 
-        x = layers.Add()([x, shortcut])
-        x = layers.Activation("relu")(x)
-        return x
+    # Conv Block 1
+    x = layers.Conv2D(
+        32, (5, 5), padding='same',
+        kernel_initializer=keras_init, name='conv_1'
+    )(inputs)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(negative_slope=0.10)(x)
 
-    def residual_block_light(x, filters):
-        shortcut = layers.Conv2D(filters, (1, 1), padding="same")(x)
-        x = layers.Conv2D(
-            filters, (3, 3), padding="same", activation="relu"
-        )(x)
-        x = layers.Conv2D(filters, (3, 3), padding="same")(x)
-        x = layers.Add()([x, shortcut])
-        x = layers.Activation("relu")(x)
-        return x
+    x = layers.Conv2D(
+        32, (5, 5), padding='same',
+        kernel_initializer=keras_init, name='conv_2'
+    )(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(negative_slope=0.10)(x)
+    x = layers.AveragePooling2D(pool_size=(2, 2), padding='same')(x)
+    x = layers.Dropout(dropout_rate_conv)(x)
 
-    inputs = tf.keras.Input(shape=(28, 28, 1))
-    x = layers.Conv2D(16, (3, 3), activation="relu", padding="same")(inputs)
-    x = residual_block_light(x, 16)
-    x = layers.MaxPooling2D((2, 2))(x)
+    # Conv Block 2
+    x = layers.Conv2D(
+        64, (5, 5), padding='same',
+        kernel_initializer=keras_init, name='conv_3'
+    )(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(negative_slope=0.10)(x)
 
-    x = residual_block(x, 32)
-    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Conv2D(
+        64, (5, 5), padding='same',
+        kernel_initializer=keras_init, name='conv_4'
+    )(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(negative_slope=0.10)(x)
+    x = layers.AveragePooling2D(pool_size=(2, 2), padding='same')(x)
+    x = layers.Dropout(dropout_rate_conv)(x)
 
-    x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dense(32, activation="relu")(x)
-    x = layers.Dense(10, activation="softmax")(x)
+    # Conv Block 3
+    x = layers.Conv2D(
+        128, (5, 5), padding='same',
+        kernel_initializer=keras_init, name='conv_5'
+    )(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(negative_slope=0.10)(x)
 
-    model = tf.keras.Model(inputs, x)
+    x = layers.Conv2D(
+        128, (5, 5), padding='same',
+        kernel_initializer=keras_init, name='conv_6'
+    )(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(negative_slope=0.10)(x)
+
+    x = layers.Conv2D(
+        128, (5, 5), padding='same',
+        kernel_initializer=keras_init, name='conv_7'
+    )(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(negative_slope=0.10)(x)
+    x = layers.AveragePooling2D(pool_size=(2, 2), padding='same')(x)
+    x = layers.Dropout(dropout_rate_fc)(x)
+
+    # Flatten
+    x = layers.Flatten()(x)
+
+    # FC 1
+    x = layers.Dense(
+        256, kernel_initializer=keras_init, name='fc_1'
+    )(x)
+    x = layers.LeakyReLU(negative_slope=0.10)(x)
+    x = layers.Dropout(dropout_rate_fc)(x)
+
+    # FC 2
+    x = layers.Dense(
+        256, kernel_initializer=keras_init, name='fc_2'
+    )(x)
+    x = layers.LeakyReLU(negative_slope=0.10)(x)
+
+    # Выходной слой: (5 * 11) → reshape → (5, 11)
+    outputs = layers.Dense(
+        num_digits * num_labels, kernel_initializer=keras_init
+    )(x)
+    outputs = layers.Reshape(
+        (num_digits, num_labels), name='y_pred'
+    )(outputs)
+
+    model = tf.keras.Model(inputs=inputs, outputs=outputs, name='SVHN_Model')
     return model
 
 
@@ -80,7 +133,7 @@ class ModelLoader:
     """Класс для загрузки и кэширования модели (Singleton)"""
 
     _instance: Optional['ModelLoader'] = None
-    _model = None
+    _model: Optional[tf.keras.Model] = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -93,10 +146,7 @@ class ModelLoader:
 
     def _load_model(self) -> None:
         """
-        Загрузка модели: пересоздаём архитектуру и загружаем веса из H5.
-
-        Это обходит проблему несовместимости конфигурации слоёв
-        между разными версиями Keras.
+        Загрузка модели: пересоздаём архитектуру SVHN и загружаем веса из H5.
         """
         try:
             logger.info(f"Загрузка модели из {config.MODEL_PATH}")
@@ -106,11 +156,9 @@ class ModelLoader:
                     f"Файл модели не найден: {config.MODEL_PATH}"
                 )
 
-            # Пересоздаём архитектуру из кода
-            model = _build_model()
-            logger.info("Архитектура модели создана")
+            model = _build_svhn_model()
+            logger.info("Архитектура модели SVHN создана")
 
-            # Загружаем только веса из H5 файла
             model.load_weights(config.MODEL_PATH)
             logger.info("Веса модели загружены из H5")
 
@@ -124,37 +172,61 @@ class ModelLoader:
             logger.error(f"Ошибка при загрузке модели: {e}")
             raise
 
-    def get_model(self):
+    def get_model(self) -> tf.keras.Model:
         """Получить загруженную модель"""
         if self._model is None:
             self._load_model()
         return self._model
 
-    def predict(self, image: np.ndarray) -> np.ndarray:
+    def predict(
+        self, image: np.ndarray
+    ) -> Tuple[List[int], List[List[float]]]:
         """
-        Выполнить предсказание для изображения
+        Выполнить предсказание последовательности цифр для изображения.
 
         Args:
-            image: Предобработанное изображение формы (H, W, C)
+            image: Предобработанное изображение формы (32, 32, 1)
 
         Returns:
-            Вектор вероятностей для каждого из 10 классов
+            Кортеж (digits, probabilities_per_position):
+              - digits: список распознанных цифр (без заглушек, класс 10)
+              - probabilities_per_position: список из 5 векторов вероятностей
+                по 11 элементов каждый (логиты → softmax)
         """
         try:
             model = self.get_model()
 
-            # Добавляем размерность батча: (H, W, C) -> (1, H, W, C)
+            # (H, W, C) → (1, H, W, C)
             if len(image.shape) == 3:
                 image = np.expand_dims(image, axis=0)
 
-            predictions = model.predict(image, verbose=0)
-            return predictions[0]
+            # Предсказание: логиты формы (1, 5, 11)
+            logits = model.predict(image, verbose=0)  # (1, 5, 11)
+            logits = logits[0]  # (5, 11)
+
+            # Softmax по последней оси для получения вероятностей
+            probs_all = tf.nn.softmax(logits, axis=-1).numpy()  # (5, 11)
+
+            # Индексы предсказанных классов для каждой позиции
+            predicted_classes = np.argmax(probs_all, axis=-1)  # (5,)
+
+            # Отбираем только реальные цифры (не заглушки, класс != 10)
+            digits = []
+            probabilities_per_position = []
+            for pos in range(config.NUM_DIGIT_POSITIONS):
+                cls = int(predicted_classes[pos])
+                probs = probs_all[pos].tolist()  # 11 вероятностей
+                probabilities_per_position.append(probs)
+                if cls != config.BLANK_CLASS:
+                    digits.append(cls)
+
+            return digits, probabilities_per_position
 
         except Exception as e:
             logger.error(f"Ошибка при выполнении предсказания: {e}")
             raise
 
-    def get_model_info(self) -> dict:
+    def get_model_info(self) -> Dict:
         """Получить информацию о модели"""
         model = self.get_model()
         return {

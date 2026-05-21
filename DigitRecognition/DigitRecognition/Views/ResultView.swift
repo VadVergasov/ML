@@ -2,7 +2,7 @@
 //  ResultView.swift
 //  DigitRecognition
 //
-//  View для отображения результатов распознавания
+//  View для отображения результатов распознавания номера дома
 //
 
 import SwiftUI
@@ -10,102 +10,193 @@ import SwiftUI
 struct ResultView: View {
     let prediction: PredictionResponse
     let onDismiss: () -> Void
-    
+
     var body: some View {
         NavigationView {
-            VStack(spacing: 20) {
-                // Предсказанная цифра
-                VStack(spacing: 10) {
-                    Text("Распознанная цифра")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-                    
-                    Text("\(prediction.predictedClass)")
-                        .font(.system(size: 72, weight: .bold, design: .rounded))
-                        .foregroundColor(.primary)
-                }
-                .padding()
-                .background(Color(.systemBackground))
-                .cornerRadius(16)
-                .shadow(radius: 5)
-                
-                // Уверенность
-                VStack(spacing: 8) {
-                    Text("Уверенность")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    Text("\(Int(prediction.confidence * 100))%")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(prediction.confidence > 0.8 ? .green : .orange)
-                }
-                .padding()
-                .background(Color(.systemBackground))
-                .cornerRadius(12)
-                
-                // График вероятностей
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Распределение вероятностей")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-                    
-                    ForEach(0..<10) { digit in
-                        ProbabilityBar(
-                            digit: digit,
-                            probability: prediction.predictions[digit],
-                            isPredicted: digit == prediction.predictedClass
-                        )
+            ScrollView {
+                VStack(spacing: 20) {
+
+                    // MARK: - Распознанный номер дома
+                    VStack(spacing: 8) {
+                        Text("Номер дома")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+
+                        Text(prediction.number.isEmpty ? "—" : prediction.number)
+                            .font(.system(size: 72, weight: .bold, design: .rounded))
+                            .foregroundColor(.primary)
+                            .minimumScaleFactor(0.4)
+                            .lineLimit(1)
+                            .padding(.horizontal)
+
+                        Text("\(prediction.digitsCount) цифр(ы) найдено")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color(.systemBackground))
+                    .cornerRadius(16)
+                    .shadow(radius: 4)
+                    .padding(.horizontal)
+
+                    // MARK: - Детали по каждой цифре
+                    if prediction.digits.count > 1 {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Детали распознавания")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal)
+
+                            ForEach(
+                                Array(prediction.digits.enumerated()),
+                                id: \.offset
+                            ) { index, digitResult in
+                                DigitDetailCard(
+                                    position: index + 1,
+                                    result: digitResult
+                                )
+                                .padding(.horizontal)
+                            }
+                        }
+                    } else if let first = prediction.digits.first {
+                        // Одна цифра — показываем вероятности (только 0-9)
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Распределение вероятностей")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+
+                            // probabilities содержит 11 элементов (0-9 + заглушка),
+                            // показываем только цифры 0-9 (индексы 0..<10)
+                            ForEach(0..<10) { digit in
+                                ProbabilityBar(
+                                    digit: digit,
+                                    probability: first.probabilities.count > digit
+                                        ? first.probabilities[digit]
+                                        : 0.0,
+                                    isPredicted: digit == first.digit
+                                )
+                            }
+                        }
+                        .padding()
+                        .background(Color(.systemBackground))
+                        .cornerRadius(16)
+                        .shadow(radius: 3)
+                        .padding(.horizontal)
+                    }
+
+                    Spacer(minLength: 20)
                 }
-                .padding()
-                .background(Color(.systemBackground))
-                .cornerRadius(16)
-                .shadow(radius: 3)
-                
-                Spacer()
+                .padding(.top)
             }
-            .padding()
-            .navigationTitle("Результаты")
+            .navigationTitle("Результат")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Закрыть") {
-                        onDismiss()
-                    }
+                    Button("Закрыть") { onDismiss() }
                 }
             }
         }
     }
 }
 
+// MARK: - Карточка одной цифры
+
+struct DigitDetailCard: View {
+    let position: Int
+    let result: DigitResult
+
+    var body: some View {
+        HStack(spacing: 16) {
+            // Позиция
+            Text("#\(position)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 28)
+
+            // Цифра
+            Text("\(result.digit)")
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .frame(width: 44)
+
+            // Уверенность
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Уверенность")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color(.systemGray5))
+                            .frame(height: 8)
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(
+                                result.confidence > 0.8
+                                    ? Color.green
+                                    : result.confidence > 0.5
+                                        ? Color.orange
+                                        : Color.red
+                            )
+                            .frame(
+                                width: geo.size.width * CGFloat(result.confidence),
+                                height: 8
+                            )
+                    }
+                }
+                .frame(height: 8)
+            }
+
+            // Процент
+            Text("\(Int(result.confidence * 100))%")
+                .font(.system(.body, design: .monospaced))
+                .fontWeight(.semibold)
+                .foregroundColor(
+                    result.confidence > 0.8 ? .green
+                    : result.confidence > 0.5 ? .orange
+                    : .red
+                )
+                .frame(width: 44, alignment: .trailing)
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(12)
+        .shadow(radius: 2)
+    }
+}
+
+// MARK: - Полоска вероятности
+
 struct ProbabilityBar: View {
     let digit: Int
     let probability: Double
     let isPredicted: Bool
-    
+
     var body: some View {
         HStack(spacing: 12) {
             Text("\(digit)")
                 .font(.system(.body, design: .monospaced))
                 .frame(width: 20)
                 .foregroundColor(isPredicted ? .primary : .secondary)
-            
+
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Rectangle()
                         .fill(Color(.systemGray5))
                         .frame(height: 8)
                         .cornerRadius(4)
-                    
                     Rectangle()
                         .fill(isPredicted ? Color.blue : Color(.systemGray4))
-                        .frame(width: geometry.size.width * CGFloat(probability), height: 8)
+                        .frame(
+                            width: geometry.size.width * CGFloat(probability),
+                            height: 8
+                        )
                         .cornerRadius(4)
                         .animation(.easeInOut(duration: 0.3), value: probability)
                 }
             }
-            
+            .frame(height: 8)
+
             Text("\(Int(probability * 100))%")
                 .font(.system(.caption, design: .monospaced))
                 .frame(width: 40, alignment: .trailing)
@@ -121,9 +212,27 @@ struct ResultView_Previews: PreviewProvider {
         ResultView(
             prediction: PredictionResponse(
                 success: true,
-                predictions: [0.01, 0.02, 0.85, 0.05, 0.02, 0.01, 0.01, 0.01, 0.01, 0.01],
-                predictedClass: 2,
-                confidence: 0.85
+                digits: [
+                    DigitResult(
+                        digit: 4,
+                        confidence: 0.97,
+                        // 11 вероятностей: индексы 0-9 + заглушка (индекс 10)
+                        probabilities: [
+                            0.0, 0.0, 0.0, 0.0, 0.97, 0.01, 0.01, 0.0, 0.0, 0.01,
+                            0.0
+                        ]
+                    ),
+                    DigitResult(
+                        digit: 2,
+                        confidence: 0.85,
+                        probabilities: [
+                            0.01, 0.02, 0.85, 0.05, 0.02, 0.01, 0.01, 0.01, 0.01,
+                            0.01, 0.0
+                        ]
+                    )
+                ],
+                number: "42",
+                digitsCount: 2
             ),
             onDismiss: {}
         )
