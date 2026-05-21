@@ -1,8 +1,10 @@
 """
 Flask-приложение для сервера распознавания последовательности цифр (SVHN).
 
-Модель принимает всё изображение целиком и предсказывает
-до 5 цифр сразу (выход формы (5, 11)).
+Пайплайн:
+  1. MSER детектирует текстовый регион (bbox области с цифрами)
+  2. ImageProcessor вырезает bbox и предобрабатывает до (32, 32, 1)
+  3. SVHN-модель предсказывает до 5 цифр сразу (выход (5, 11))
 """
 
 import logging
@@ -14,6 +16,7 @@ from flask_cors import CORS
 import config
 from image_processor import ImageProcessor
 from model_loader import ModelLoader
+from mser_detector import MSERDetector
 
 # Настройка логирования
 logging.basicConfig(
@@ -32,6 +35,7 @@ CORS(app, origins=config.CORS_ORIGINS)
 # Инициализация компонентов
 model_loader = ModelLoader()
 image_processor = ImageProcessor()
+mser_detector = MSERDetector()
 
 
 def allowed_file(filename: str) -> bool:
@@ -69,7 +73,8 @@ def health_check() -> Dict[str, Any]:
             'config': {
                 'image_size': config.IMAGE_SIZE,
                 'image_channels': config.IMAGE_CHANNELS,
-                'allowed_extensions': list(config.ALLOWED_EXTENSIONS)
+                'allowed_extensions': list(config.ALLOWED_EXTENSIONS),
+                'detector': 'MSER (OpenCV)',
             }
         }), 200
     except Exception as e:
@@ -83,7 +88,11 @@ def predict() -> Dict[str, Any]:
     Распознавание последовательности цифр на изображении.
 
     Принимает multipart/form-data с полем 'image'.
-    Модель предсказывает до 5 цифр сразу из всего изображения.
+
+    Пайплайн:
+      1. YOLOv8 ищет bbox с наибольшей уверенностью
+      2. Вырезает найденную область (или всё изображение если YOLO не нашёл)
+      3. SVHN-модель предсказывает до 5 цифр
 
     Returns:
         JSON:
@@ -93,12 +102,16 @@ def predict() -> Dict[str, Any]:
                 {
                     "digit": 4,
                     "confidence": 0.97,
-                    "probabilities": [0.0, ..., 0.97, ...]  // 11 значений
+                    "probabilities": [...]   // 11 значений (0-9 + заглушка)
                 },
                 ...
             ],
             "number": "42",
-            "digits_count": 2
+            "digits_count": 2,
+            "bbox": {                        // null если YOLO не нашёл объект
+                "x1": 10, "y1": 20,
+                "x2": 150, "y2": 180
+            }
         }
     """
     try:
@@ -134,20 +147,27 @@ def predict() -> Dict[str, Any]:
                 'error': 'Невалидное изображение'
             }), 400
 
-        # Предобрабатываем всё изображение целиком → (32, 32, 1)
-        processed_image = image_processor.preprocess(image_bytes)
+        # --- Шаг 1: MSER детекция текстового региона ---
+        img_rgb = image_processor.load_rgb(image_bytes)
+        bbox = mser_detector.detect(img_rgb)
 
-        # Предсказание: digits — список цифр без заглушек,
-        # probs_per_pos — список из 5 векторов по 11 вероятностей
+        if bbox is not None:
+            logger.info(f"MSER нашёл bbox: {bbox}")
+        else:
+            logger.info("MSER не нашёл регион, используем всё изображение")
+
+        # --- Шаг 2: Предобработка (с кропом по bbox или без) ---
+        processed_image = image_processor.preprocess(image_bytes, bbox=bbox)
+
+        # --- Шаг 3: Предсказание SVHN ---
         digits, probs_per_pos = model_loader.predict(processed_image)
 
         # Формируем детальный ответ по каждой позиции
         results = []
         for pos_idx, probs in enumerate(probs_per_pos):
-            # Индекс предсказанного класса для этой позиции
-            predicted_cls = int(max(range(len(probs)), key=lambda i: probs[i]))
-
-            # Пропускаем позиции-заглушки (класс 10)
+            predicted_cls = int(
+                max(range(len(probs)), key=lambda i: probs[i])
+            )
             if predicted_cls == config.BLANK_CLASS:
                 continue
 
@@ -155,22 +175,31 @@ def predict() -> Dict[str, Any]:
             results.append({
                 'digit': predicted_cls,
                 'confidence': confidence,
-                # Передаём все 11 вероятностей (0-9 + заглушка)
                 'probabilities': [float(p) for p in probs]
             })
 
         number_str = ''.join(str(d['digit']) for d in results)
 
+        # Формируем bbox для ответа
+        bbox_response = None
+        if bbox is not None:
+            x1, y1, x2, y2 = bbox
+            bbox_response = {
+                'x1': x1, 'y1': y1,
+                'x2': x2, 'y2': y2
+            }
+
         logger.info(
             f"Распознан номер: '{number_str}' "
-            f"({len(results)} цифр)"
+            f"({len(results)} цифр), bbox={bbox_response}"
         )
 
         return jsonify({
             'success': True,
             'digits': results,
             'number': number_str,
-            'digits_count': len(results)
+            'digits_count': len(results),
+            'bbox': bbox_response,
         }), 200
 
     except Exception as e:
@@ -203,9 +232,9 @@ def internal_server_error(error) -> Dict[str, Any]:
 
 def main():
     """Запуск сервера"""
-    logger.info("Запуск сервера распознавания цифр (SVHN)...")
+    logger.info("Запуск сервера распознавания цифр (SVHN + MSER)...")
     logger.info(f"Хост: {config.HOST}, Порт: {config.PORT}")
-    logger.info(f"Путь к модели: {config.MODEL_PATH}")
+    logger.info(f"Путь к SVHN-модели: {config.MODEL_PATH}")
     app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
 
 

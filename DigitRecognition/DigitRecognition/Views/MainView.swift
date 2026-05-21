@@ -10,6 +10,9 @@ import PhotosUI
 
 struct MainView: View {
     @State private var selectedImage: UIImage?
+    /// Нормализованное изображение (EXIF применён) — именно его видит сервер.
+    /// Используется для отображения bbox в ResultView.
+    @State private var normalizedImage: UIImage?
     @State private var prediction: PredictionResponse?
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -159,7 +162,12 @@ struct MainView: View {
             // Результат распознавания
             .sheet(isPresented: $showResult) {
                 if let prediction = prediction {
-                    ResultView(prediction: prediction) {
+                    ResultView(
+                        prediction: prediction,
+                        // Передаём нормализованное изображение —
+                        // bbox рассчитан именно для него
+                        originalImage: normalizedImage ?? selectedImage
+                    ) {
                         showResult = false
                     }
                 }
@@ -172,6 +180,13 @@ struct MainView: View {
 
         isLoading = true
         errorMessage = nil
+
+        // Нормализуем ориентацию и ресайзим — точно так же как APIClient.
+        // normalizedImage используется в ResultView для отображения bbox,
+        // поэтому он должен совпадать с изображением, которое видит сервер.
+        let normalized = image.normalizedOrientation()
+            .resizedToMaxSide(1920)
+        normalizedImage = normalized
 
         APIClient.shared.updateServerURL(serverURL)
 

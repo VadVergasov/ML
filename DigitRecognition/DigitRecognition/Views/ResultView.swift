@@ -9,12 +9,27 @@ import SwiftUI
 
 struct ResultView: View {
     let prediction: PredictionResponse
+    let originalImage: UIImage?
     let onDismiss: () -> Void
 
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
+
+                    // MARK: - Изображение с выделенным bbox (если есть)
+                    if let image = originalImage {
+                        ImageWithBBox(
+                            image: image,
+                            bbox: prediction.bbox
+                        )
+                        // Фиксированная высота нужна чтобы GeometryReader
+                        // внутри ImageWithBBox получил корректный containerH
+                        // при первом рендере (maxHeight даёт 0 в VStack).
+                        .frame(height: 260)
+                        .padding(.horizontal)
+                        .shadow(radius: 4)
+                    }
 
                     // MARK: - Распознанный номер дома
                     VStack(spacing: 8) {
@@ -32,6 +47,15 @@ struct ResultView: View {
                         Text("\(prediction.digitsCount) цифр(ы) найдено")
                             .font(.caption)
                             .foregroundColor(.secondary)
+
+                        if prediction.bbox == nil {
+                            Label(
+                                "Область не выделена (MSER не нашёл текст)",
+                                systemImage: "exclamationmark.triangle"
+                            )
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                        }
                     }
                     .padding()
                     .frame(maxWidth: .infinity)
@@ -97,6 +121,106 @@ struct ResultView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Изображение с наложенным bbox
+
+/// Отображает изображение с зелёной рамкой bbox поверх него.
+///
+/// Ключевая сложность: SwiftUI Image с .aspectRatio(.fit) занимает
+/// меньше места чем контейнер. GeometryReader даёт размер контейнера,
+/// а не изображения. Поэтому вычисляем реальный размер изображения
+/// вручную и передаём его в BBoxOverlay.
+struct ImageWithBBox: View {
+    let image: UIImage
+    let bbox: BoundingBox?
+
+    // Размер изображения в пикселях (то, что получил сервер)
+    private var pixelSize: CGSize {
+        CGSize(
+            width: CGFloat(image.cgImage?.width
+                ?? Int(image.size.width * image.scale)),
+            height: CGFloat(image.cgImage?.height
+                ?? Int(image.size.height * image.scale))
+        )
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let containerW = geo.size.width
+            let containerH = geo.size.height
+            let px = pixelSize.width
+            let py = pixelSize.height
+
+            // Вычисляем реальный размер изображения при aspectFit
+            let scaleToFit = min(
+                containerW / max(px, 1),
+                containerH / max(py, 1)
+            )
+            let imgW = px * scaleToFit
+            let imgH = py * scaleToFit
+
+            // Смещение для центрирования изображения в контейнере
+            let offsetX = (containerW - imgW) / 2
+            let offsetY = (containerH - imgH) / 2
+
+            ZStack(alignment: .topLeading) {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .cornerRadius(12)
+                    .frame(width: containerW, height: containerH)
+
+                if let bbox = bbox {
+                    // BBoxOverlay рисует рамку в координатах пикселей изображения.
+                    // Смещаем его на offsetX/offsetY чтобы совпало с изображением.
+                    BBoxOverlay(
+                        bbox: bbox,
+                        imagePixelSize: pixelSize,
+                        displaySize: CGSize(width: imgW, height: imgH)
+                    )
+                    .offset(x: offsetX, y: offsetY)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Оверлей bounding box поверх изображения
+
+struct BBoxOverlay: View {
+    let bbox: BoundingBox
+    /// Размер изображения в пикселях (то, что получил сервер через pngData)
+    let imagePixelSize: CGSize
+    /// Реальный отображаемый размер Image-вью в points (уже вычислен снаружи)
+    let displaySize: CGSize
+
+    var body: some View {
+        // Масштаб: пиксели → points
+        // displaySize уже учитывает соотношение сторон (aspectFit),
+        // поэтому scaleX == scaleY, но считаем оба для надёжности.
+        let scaleX = displaySize.width / max(imagePixelSize.width, 1)
+        let scaleY = displaySize.height / max(imagePixelSize.height, 1)
+
+        // Координаты рамки в points (левый верхний угол + размер)
+        let rx = CGFloat(bbox.x1) * scaleX
+        let ry = CGFloat(bbox.y1) * scaleY
+        let rw = CGFloat(bbox.width) * scaleX
+        let rh = CGFloat(bbox.height) * scaleY
+
+        // Canvas размером с изображение — рисуем рамку в абсолютных координатах
+        Canvas { context, _ in
+            let rect = CGRect(x: rx, y: ry, width: rw, height: rh)
+            var path = Path()
+            path.addRect(rect)
+            context.stroke(
+                path,
+                with: .color(.green),
+                lineWidth: 2
+            )
+        }
+        .frame(width: displaySize.width, height: displaySize.height)
     }
 }
 
@@ -232,8 +356,10 @@ struct ResultView_Previews: PreviewProvider {
                     )
                 ],
                 number: "42",
-                digitsCount: 2
+                digitsCount: 2,
+                bbox: BoundingBox(x1: 10, y1: 20, x2: 150, y2: 180)
             ),
+            originalImage: nil,
             onDismiss: {}
         )
     }

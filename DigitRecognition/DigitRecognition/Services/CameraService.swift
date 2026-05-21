@@ -139,3 +139,48 @@ extension CameraService: UIImagePickerControllerDelegate, UINavigationController
         completion?(nil)
     }
 }
+
+// MARK: - UIImage orientation normalization & resize
+
+extension UIImage {
+    /// Вернуть копию изображения с применённой EXIF-ориентацией.
+    ///
+    /// JPEG-фото с камеры хранят пиксели в "сыром" виде и указывают
+    /// нужный поворот через тег Orientation. UIKit применяет его
+    /// автоматически при отображении, но pngData()/jpegData() отдают
+    /// пиксели без поворота. Это приводит к тому, что сервер получает
+    /// неповёрнутое изображение, а bbox рисуется поверх повёрнутого.
+    ///
+    /// Метод перерисовывает изображение в UIGraphicsImageRenderer,
+    /// применяя трансформацию ориентации, и возвращает .up-изображение.
+    func normalizedOrientation() -> UIImage {
+        guard imageOrientation != .up else { return self }
+
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    /// Уменьшить изображение так, чтобы длинная сторона не превышала
+    /// `maxSide` пикселей. Если изображение уже меньше — возвращает self.
+    ///
+    /// Используется перед отправкой на сервер: PNG с iPhone 12MP весит
+    /// ~36MB и вызывает 413 Request Entity Too Large. После ресайза до
+    /// 1920px PNG весит ~3-6MB. Bbox рассчитывается для ресайзнутого
+    /// изображения, поэтому координаты остаются точными.
+    func resizedToMaxSide(_ maxSide: CGFloat) -> UIImage {
+        let longSide = max(size.width, size.height)
+        guard longSide > maxSide else { return self }
+
+        let scale = maxSide / longSide
+        let newSize = CGSize(
+            width: (size.width * scale).rounded(),
+            height: (size.height * scale).rounded()
+        )
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: newSize))
+        }
+    }
+}

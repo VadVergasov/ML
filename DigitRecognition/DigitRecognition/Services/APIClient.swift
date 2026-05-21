@@ -74,7 +74,15 @@ class APIClient {
             return
         }
 
-        guard let imageData = image.pngData() else {
+        // 1. Нормализуем ориентацию (EXIF → .up): pngData() не применяет
+        //    EXIF-поворот, поэтому делаем это явно.
+        // 2. Ресайзим до 1920px по длинной стороне: PNG с iPhone 12MP
+        //    весит ~36MB и вызывает 413 Request Entity Too Large.
+        //    После ресайза PNG весит ~3-6MB. Bbox рассчитывается для
+        //    ресайзнутого изображения — координаты остаются точными.
+        let normalizedImage = image.normalizedOrientation()
+            .resizedToMaxSide(1920)
+        guard let imageData = normalizedImage.pngData() else {
             completion(.failure(APIError.imageConversionFailed))
             return
         }
